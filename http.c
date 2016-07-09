@@ -139,14 +139,6 @@ static bool do_connect(const char *host, int port,
 	return true;
 }
 
-static void do_disconnect(struct http_connection *conn, int how)
-{
-	int err;
-
-	err = shutdown(conn->sockfd, how);
-	assert(err == 0);
-}
-
 /*
  * Wrapper around send(2). Sends exactly @len bytes from @buf on success. On
  * failure, sets @last_error and the @conn->failed flag. If the flag is already
@@ -380,10 +372,6 @@ static bool send_request(struct http_connection *conn,
 	send_line(conn, NULL);
 
 	flush_buffer(conn);
-
-	/* We only support bodiless requests, so disconnect now */
-	do_disconnect(conn, SHUT_WR);
-
 	return !conn->failed;
 }
 
