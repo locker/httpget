@@ -32,6 +32,10 @@ struct http_response {
 
 	size_t body_size;	/* content length; 0 if unavailable */
 	size_t body_read;	/* number of bytes read from body */
+
+	bool chunked;		/* Transfer-Encoding: chunked */
+	size_t chunk_size;	/* number of bytes left in current chunk;
+				   0 if we're done reading */
 };
 
 #define HTTP_STATUS_OK(status)	((status) / 100 == 2)	/* 2xx */

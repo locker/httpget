@@ -395,8 +395,8 @@ static bool send_request(struct http_connection *conn,
  * characters and the function returns @buf_size. In this case @buf is not
  * nul-terminated.
  */
-static size_t __recv_line(struct http_connection *conn,
-			  char *buf, size_t buf_size)
+static size_t recv_line(struct http_connection *conn,
+			char *buf, size_t buf_size)
 {
 	size_t line_len = 0;
 
@@ -437,11 +437,11 @@ static size_t __recv_line(struct http_connection *conn,
 /*
  * Size of @buf must equal %HTTP_LINE_MAX.
  */
-static bool recv_line(struct http_connection *conn, char *buf)
+static bool recv_header_line(struct http_connection *conn, char *buf)
 {
 	size_t n;
 
-	n = __recv_line(conn, buf, HTTP_LINE_MAX);
+	n = recv_line(conn, buf, HTTP_LINE_MAX);
 	if (conn->failed)
 		return false;
 	if (n >= HTTP_LINE_MAX) {
@@ -557,6 +557,10 @@ static bool handle_content_length_header(char *s, struct http_response *resp)
 	char *end;
 	unsigned long long x;
 
+	/* Content-Length is ignored for chunked responses */
+	if (resp->chunked)
+		return true;
+
 	x = strtoull(s, &end, 10);
 	if (*end || end == s ||
 	    (x == ULLONG_MAX && errno == ERANGE) || x > SIZE_MAX) {
@@ -568,8 +572,27 @@ static bool handle_content_length_header(char *s, struct http_response *resp)
 	return true;
 }
 
+static bool handle_transfer_encoding_header(char *s, struct http_response *resp)
+{
+	/* Looking for "chunked" at the end */
+	const char *chunked_str = "chunked";
+	const size_t chunked_strlen = sizeof(chunked_str) - 1;
+
+	size_t len = strlen(s);
+
+	if (len >= chunked_strlen &&
+	    strcasecmp(s + len - chunked_strlen, chunked_str) == 0) {
+		resp->chunked = true;
+
+		/* Content-Length is ignored for chunked responses */
+		resp->body_size = 0;
+	}
+	return true;
+}
+
 static struct http_header_handler header_handlers[] = {
 	{ "Content-Length",		handle_content_length_header, },
+	{ "Transfer-Encoding",		handle_transfer_encoding_header, },
 	{ }, /* terminate */
 };
 
@@ -594,13 +617,16 @@ static void init_response(struct http_response *resp)
 {
 	resp->body_size = -1;
 	resp->body_read = 0;
+
+	resp->chunked = false;
+	resp->chunk_size = 0;
 }
 
 /*
  * Receive a http response. Return %true on success.
  */
-bool recv_response(struct http_connection *conn,
-		   struct http_response *resp)
+static bool recv_response(struct http_connection *conn,
+			  struct http_response *resp)
 {
 	char *buf;
 	bool ret = false;
@@ -610,7 +636,7 @@ bool recv_response(struct http_connection *conn,
 	buf = xmalloc(HTTP_LINE_MAX);
 
 	/* Get status */
-	if (!recv_line(conn, buf) ||
+	if (!recv_header_line(conn, buf) ||
 	    !parse_status(buf, resp))
 		goto out;
 
@@ -618,7 +644,7 @@ bool recv_response(struct http_connection *conn,
 	while (1) {
 		char *field, *value;
 
-		if (!recv_line(conn, buf))
+		if (!recv_header_line(conn, buf))
 			goto err_hdrs;
 
 		/* Empty line? Proceed to the message body */
@@ -639,6 +665,30 @@ err_hdrs:
 	goto out;
 }
 
+static bool load_chunk(struct http_connection *conn,
+		       struct http_response *resp)
+{
+	char buf[16]; /* should be enough for storing chunk size */
+	char *end;
+	unsigned long x;
+
+	if (recv_line(conn, buf, sizeof(buf)) >= sizeof(buf))
+		goto fail;
+
+	x = strtoul(buf, &end, 16);
+	if (*end || end == buf ||
+	    (x == ULONG_MAX && errno == ERANGE) || x > SIZE_MAX)
+		goto fail;
+
+	resp->chunk_size = x;
+	return true;
+
+fail:
+	if (!conn->failed)
+		set_last_error("Failed to parse response chunk size");
+	return false;
+}
+
 bool http_simple_request(const struct http_request_info *info,
 			 struct http_response *resp)
 {
@@ -655,13 +705,62 @@ bool http_simple_request(const struct http_request_info *info,
 	if (!recv_response(conn, resp))
 		goto fail;
 
+	/* Load the first chunk - see chunked_read() */
+	if (resp->chunked && !load_chunk(conn, resp)) {
+		http_response_destroy(resp);
+		return false;
+	}
+
 	return true;
 fail:
 	destroy_conn(conn);
 	return false;
 }
 
-ssize_t http_response_read(struct http_response *resp, void *buf, size_t len)
+static ssize_t chunked_read(struct http_response *resp, void *buf, size_t len)
+{
+	struct http_connection *conn = &resp->conn;
+	size_t n;
+
+	if (!resp->chunk_size)
+		return 0;
+
+	/* Read from the current chunk */
+	len = min(len, resp->chunk_size);
+	n = buffered_recv(conn, buf, len);
+	if (n < len) {
+		if (!conn->failed)
+			set_last_error("Response chunk shorter than announced");
+		return -1;
+	}
+
+	resp->body_read += n;
+	resp->chunk_size -= n;
+
+	/*
+	 * If we're done with the current chunk, load the next one. We don't
+	 * have to read exactly as many bytes as requested, so we don't proceed
+	 * to reading the new chunk right now - it'll be done by the next call
+	 * to chunked_read().
+	 */
+	if (!resp->chunk_size) {
+		char crlf[2];
+
+		if (buffered_recv(conn, crlf, 2) != 2 ||
+		    strncmp(crlf, "\r\n", 2) != 0) {
+			if (!conn->failed)
+				set_last_error("Response chunk lacks "
+					       "terminating CRLF");
+			return -1;
+		}
+		if (!load_chunk(conn, resp))
+			return -1;
+	}
+
+	return n;
+}
+
+static ssize_t simple_read(struct http_response *resp, void *buf, size_t len)
 {
 	struct http_connection *conn = &resp->conn;
 	size_t n;
@@ -690,6 +789,14 @@ ssize_t http_response_read(struct http_response *resp, void *buf, size_t len)
 	}
 
 	return 0;
+}
+
+ssize_t http_response_read(struct http_response *resp, void *buf, size_t len)
+{
+	if (resp->chunked)
+		return chunked_read(resp, buf, len);
+	else
+		return simple_read(resp, buf, len);
 }
 
 void http_response_destroy(struct http_response *resp)
