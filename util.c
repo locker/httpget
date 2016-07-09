@@ -1,6 +1,9 @@
+#include <arpa/inet.h>
+#include <netdb.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
@@ -56,4 +59,31 @@ void *__xmalloc(const char *_file, int _line, size_t size)
 void *__xstrdup(const char *_file, int _line, const char *s)
 {
 	__XALLOC(strdup, strlen(s) + 1, s);
+}
+
+bool addrinfo_addr_port(struct addrinfo *ai,
+			char *addr, size_t len, int *port)
+{
+	void *addr_raw;
+	unsigned short port_raw;
+
+	switch (ai->ai_family) {
+	case AF_INET:
+		addr_raw = &((struct sockaddr_in *)ai->ai_addr)->sin_addr;
+		port_raw = ((struct sockaddr_in *)ai->ai_addr)->sin_port;
+		break;
+	case AF_INET6:
+		addr_raw = &((struct sockaddr_in6 *)ai->ai_addr)->sin6_addr;
+		port_raw = ((struct sockaddr_in6 *)ai->ai_addr)->sin6_port;
+		break;
+	default:
+		errno = EAFNOSUPPORT;
+		return false;
+	}
+
+	if (!inet_ntop(ai->ai_family, addr_raw, addr, len))
+		return false;
+
+	*port = ntohs(port_raw);
+	return true;
 }

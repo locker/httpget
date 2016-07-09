@@ -1,6 +1,7 @@
 #ifndef _UTIL_H
 #define _UTIL_H
 
+#include <stddef.h>
 #include <stdbool.h>
 
 #define min(x, y) ({				\
@@ -58,5 +59,18 @@ void *__xstrdup(const char *, int, const char *);
 
 #define xmalloc(size)		__xmalloc(__FILE__, __LINE__, (size))
 #define xstrdup(s)		__xstrdup(__FILE__, __LINE__, (s))
+
+/**
+ * addrinfo_addr_port - extract address and port from addrinfo struct
+ * @ai: the addrinfo struct
+ * @addr: buffer to store the address string in
+ * @len: size of @addr buffer
+ * @port: location to write the port to
+ *
+ * Returns %true on success.
+ */
+struct addrinfo;
+bool addrinfo_addr_port(struct addrinfo *ai,
+			char *addr, size_t len, int *port);
 
 #endif /* _UTIL_H */
