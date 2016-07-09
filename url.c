@@ -109,7 +109,7 @@ static bool parse_path(const char **str_ptr, struct url_struct *url)
 	/* no path - assume `/' */
 	if (!*s || (*s == '/' && !*(s + 1))) {
 		url->path = (char *)slash_str;
-		return true;
+		goto success;
 	}
 
 	if (*s != '/')
@@ -117,6 +117,13 @@ static bool parse_path(const char **str_ptr, struct url_struct *url)
 
 	/* TODO: check path for invalid characters */
 	url->path = xstrdup(s);
+
+success:
+	url->name = strrchr(url->path, '/');
+	if (url->name)
+		url->name += 1;
+	else
+		url->name = ""; /* we never free name so it's OK */
 	return true;
 }
 

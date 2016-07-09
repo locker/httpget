@@ -23,6 +23,8 @@ struct url_struct {
 			   NULL if not specified */
 	char *host;	/* NULL if not specified */
 	char *path;	/* always starts with `/' */
+	char *name;	/* last path component;
+			   empty string if path ends with `/' */
 	int port;	/* -1 if not specified */
 };
 
