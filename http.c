@@ -307,13 +307,24 @@ static void send_str(struct http_connection *conn, const char *str)
 	buffered_send(conn, str, strlen(str));
 }
 
+static void send_line(struct http_connection *conn, const char *str, ...)
+{
+	va_list ap;
+
+	va_start(ap, str);
+	while (str) {
+		send_str(conn, str);
+		str = va_arg(ap, const char *);
+	}
+	va_end(ap);
+
+	send_str(conn, "\r\n");
+}
+
 static void send_header(struct http_connection *conn,
 			const char *field, const char *value)
 {
-	send_str(conn, field);
-	send_str(conn, ": ");
-	send_str(conn, value);
-	send_str(conn, "\r\n");
+	send_line(conn, field, ": ", value, NULL);
 }
 
 /*
@@ -322,10 +333,7 @@ static void send_header(struct http_connection *conn,
 static bool send_request(struct http_connection *conn,
 			 const struct http_request_info *info)
 {
-	send_str(conn, info->command);
-	send_str(conn, " ");
-	send_str(conn, info->path);
-	send_str(conn, " HTTP/1.1\r\n");
+	send_line(conn, info->command, " ", info->path, " HTTP/1.1", NULL);
 
 	/* Host header is mandatory in case of HTTP/1.1 */
 	send_header(conn, "Host", info->host);
@@ -334,7 +342,7 @@ static bool send_request(struct http_connection *conn,
 	 * neither do we actually need them for now */
 	send_header(conn, "Connection", "close");
 
-	send_str(conn, "\r\n");
+	send_line(conn, NULL);
 
 	flush_buffer(conn);
 
