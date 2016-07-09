@@ -32,6 +32,11 @@ static char *OUTPUT_FILE;
 static int output_fd = -1;
 static struct url_struct url;
 
+static void printf_stderr(const char *fmt, va_list ap)
+{
+	vfprintf(stderr, fmt, ap);
+}
+
 static void print_usage(void)
 {
 	fprintf(stderr, "Usage: %1$s [option]... URL\n"
@@ -47,6 +52,8 @@ static void print_help(void)
 	       "Options:\n"
 	       "  -o FILE       write document to FILE\n"
 	       "                (use `-' for stdandard output)\n"
+	       "  -v            increase output verbosity\n"
+	       "                (useful for debugging)\n"
 	       "  -h            print this help and exit\n",
 	       PROG_NAME);
 }
@@ -75,10 +82,13 @@ static void parse_args(int argc, char *argv[])
 
 	PROG_NAME = argv[0];
 
-	while ((c = getopt(argc, argv, "o:h")) != -1) {
+	while ((c = getopt(argc, argv, "o:vh")) != -1) {
 		switch (c) {
 		case 'o':
 			OUTPUT_FILE = optarg;
+			break;
+		case 'v':
+			http_dump_fn = printf_stderr;
 			break;
 		case 'h':
 			print_help();
