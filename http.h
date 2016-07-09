@@ -3,6 +3,12 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdarg.h>
+
+typedef void (*http_dump_fn_t)(const char *, va_list);
+
+extern http_dump_fn_t http_dump_fn;	/* if set, this function will be used
+					   for dumping debug information */
 
 struct http_connection {
 	int sockfd;		/* tcp socket corresponding to the http connection */

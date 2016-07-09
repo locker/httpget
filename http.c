@@ -26,6 +26,19 @@
 #define BUF_USED(conn)		((conn)->buf_end - (conn)->buf_begin)
 #define BUF_LEFT(conn)		(BUF_SIZE - (conn)->buf_end)
 
+http_dump_fn_t http_dump_fn;
+
+static void dump(const char *fmt, ...)
+{
+	if (http_dump_fn) {
+		va_list ap;
+
+		va_start(ap, fmt);
+		http_dump_fn(fmt, ap);
+		va_end(ap);
+	}
+}
+
 /*
  * The last raised error is stored here, see http_last_error() and
  * set_last_error().
@@ -58,6 +71,16 @@ const char *http_last_error(void)
 	return last_error;
 }
 
+static void dump_addrinfo(struct addrinfo *ai)
+{
+	char addr[128];
+	int port;
+
+	dump("%s", ai->ai_canonname);
+	if (addrinfo_addr_port(ai, addr, sizeof(addr), &port))
+		dump(" (%s) port %d", addr, port);
+}
+
 /*
  * Try to establish a tcp connection to be used for http session.
  * Return %true and set conn->sockfd on success.
@@ -72,6 +95,7 @@ static bool do_connect(const char *host, int port,
 	int err;
 
 	memset(&ai_hint, 0, sizeof(ai_hint));
+	ai_hint.ai_flags = AI_CANONNAME;
 	ai_hint.ai_family = AF_UNSPEC;
 	ai_hint.ai_socktype = SOCK_STREAM;
 
@@ -91,6 +115,11 @@ static bool do_connect(const char *host, int port,
 			err = errno;
 			continue;
 		}
+
+		dump("Connecting to ");
+		dump_addrinfo(ai);
+		dump("\n");
+
 		if (connect(sockfd, ai->ai_addr, ai->ai_addrlen) == 0)
 			break;
 		err = errno;
@@ -311,13 +340,17 @@ static void send_line(struct http_connection *conn, const char *str, ...)
 {
 	va_list ap;
 
+	dump("> ");
+
 	va_start(ap, str);
 	while (str) {
+		dump("%s", str);
 		send_str(conn, str);
 		str = va_arg(ap, const char *);
 	}
 	va_end(ap);
 
+	dump("\n");
 	send_str(conn, "\r\n");
 }
 
@@ -413,6 +446,7 @@ static bool recv_line(struct http_connection *conn, char *buf)
 		set_last_error("Invalid response: Header line too long");
 		return false;
 	}
+	dump("< %s\n", buf);
 	return true;
 }
 
