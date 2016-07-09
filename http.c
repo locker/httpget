@@ -603,7 +603,14 @@ fail:
 
 ssize_t http_response_read(struct http_response *resp, void *buf, size_t len)
 {
-	return buffered_recv(&resp->conn, buf, len);
+	struct http_connection *conn = &resp->conn;
+	size_t n;
+
+	n = buffered_recv(conn, buf, len);
+	if (n)
+		return n;
+
+	return conn->failed ? -1 : 0;
 }
 
 void http_response_destroy(struct http_response *resp)
