@@ -1,4 +1,7 @@
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -13,16 +16,84 @@
 #define BUF_SIZE		65536
 
 /*
+ * Used if -o option is omitted and URL ends with '/'.
+ */
+#define DEFAULT_OUTPUT_FILE	"index.html"
+
+/*
  * Command line arguments.
+ *
+ * Initialized by parse_args() and never change afterwards.
  */
 static char *PROG_NAME;
 static char *URL;
+static char *OUTPUT_FILE;
 
+static int output_fd = -1;
 static struct url_struct url;
 
 static void print_usage(void)
 {
-	fprintf(stderr, "Usage: %s URL\n", PROG_NAME);
+	fprintf(stderr, "Usage: %1$s [option]... URL\n"
+		"Try `%1$s -h' for more information\n",
+		PROG_NAME);
+}
+
+static void print_help(void)
+{
+	printf("httpget - HTTP file retriever\n"
+	       "Usage:\n"
+	       "  %s [option]... URL\n"
+	       "Options:\n"
+	       "  -o FILE       write document to FILE\n"
+	       "                (use `-' for stdandard output)\n"
+	       "  -h            print this help and exit\n",
+	       PROG_NAME);
+}
+
+static void parse_error(const char *fmt, ...)
+{
+	if (fmt) {
+		va_list ap;
+
+		fputs(PROG_NAME, stderr);
+		fputs(": ", stderr);
+
+		va_start(ap, fmt);
+		vfprintf(stderr, fmt, ap);
+		va_end(ap);
+
+		fputc('\n', stderr);
+	}
+	print_usage();
+	exit(2);
+}
+
+static void parse_args(int argc, char *argv[])
+{
+	int c;
+
+	PROG_NAME = argv[0];
+
+	while ((c = getopt(argc, argv, "o:h")) != -1) {
+		switch (c) {
+		case 'o':
+			OUTPUT_FILE = optarg;
+			break;
+		case 'h':
+			print_help();
+			exit(0);
+		default:
+			parse_error(NULL);
+		}
+	}
+
+	if (optind == argc)
+		parse_error("URL missing");
+	if (optind != argc - 1)
+		parse_error("too many arguments");
+
+	URL = argv[optind];
 }
 
 static void __fail(int err, const char *fmt, ...)
@@ -48,14 +119,36 @@ static void __fail(int err, const char *fmt, ...)
 #define fail(fmt...)		__fail(0, fmt)
 #define fail_errno(fmt...)	__fail(errno, fmt)
 
+static void open_output_file(void)
+{
+	const char *filename = OUTPUT_FILE;
+
+	if (!filename)
+		filename = !strempty(url.name) ? url.name : DEFAULT_OUTPUT_FILE;
+	else if (strcmp(OUTPUT_FILE, "-") == 0) {
+		output_fd = STDOUT_FILENO;
+		return;
+	}
+
+	output_fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC, 0666);
+	if (output_fd < 0)
+		fail_errno("Failed to open output file");
+}
+
+static void close_output_file(void)
+{
+	if (output_fd != STDOUT_FILENO)
+		close(output_fd);
+}
+
 static void output(const char *buf, size_t size)
 {
 	while (size > 0) {
 		ssize_t n;
 
-		n = write(STDOUT_FILENO, buf, size);
+		n = write(output_fd, buf, size);
 		if (n < 0)
-			fail_errno("Write failed");
+			fail_errno("Failed to write to output file");
 
 		assert(n > 0);
 		assert(n <= size);
@@ -85,6 +178,7 @@ static void download_http(void)
 	if (!HTTP_STATUS_OK(resp.status))
 		fail("Error %d: %s", resp.status, resp.reason);
 
+	open_output_file();
 	while (1) {
 		n = http_response_read(&resp, buf, BUF_SIZE);
 		if (n < 0)
@@ -93,6 +187,7 @@ static void download_http(void)
 			break;
 		output(buf, n);
 	}
+	close_output_file();
 
 	http_response_destroy(&resp);
 	free(buf);
@@ -115,15 +210,7 @@ static void download(void)
 
 int main(int argc, char *argv[])
 {
-	PROG_NAME = argv[0];
-
-	if (argc != 2) {
-		print_usage();
-		exit(2);
-	}
-
-	URL = argv[1];
-
+	parse_args(argc, argv);
 	download();
 	exit(0);
 }
