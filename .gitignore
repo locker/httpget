@@ -1,0 +1,12 @@
+# program executable
+httpget
+
+# object files
+*.o
+
+# dependency files
+*.d
+
+# editor temporaries
+*.swp
+*~
