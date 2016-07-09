@@ -2,12 +2,14 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <netdb.h>
-#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <string.h>
 #include <ctype.h>
+#include <limits.h>
 #include <errno.h>
 #include <assert.h>
 
@@ -537,6 +539,63 @@ static bool parse_header(char *str, char **field, char **value)
 	return true;
 }
 
+struct http_header_handler {
+	/*
+	 * The field name which this handler handles.
+	 */
+	const char *field;
+
+	/*
+	 * The handler function. It is supposed to set @resp according to the
+	 * header value, passed in @value, and return %true on success.
+	 */
+	bool (*handle)(char *value, struct http_response *resp);
+};
+
+static bool handle_content_length_header(char *s, struct http_response *resp)
+{
+	char *end;
+	unsigned long long x;
+
+	x = strtoull(s, &end, 10);
+	if (*end || end == s ||
+	    (x == ULLONG_MAX && errno == ERANGE) || x > SIZE_MAX) {
+		set_last_error("Failed to parse `Content-Length' header: %s", s);
+		return false;
+	}
+
+	resp->body_size = x;
+	return true;
+}
+
+static struct http_header_handler header_handlers[] = {
+	{ "Content-Length",		handle_content_length_header, },
+	{ }, /* terminate */
+};
+
+/*
+ * Given a header, call the corresponding handler, if any.
+ */
+static bool handle_header(char *field, char *value, struct http_response *resp)
+{
+	struct http_header_handler *h;
+	bool ret = true;
+
+	for (h = header_handlers; h->handle; h++) {
+		if (strcasecmp(h->field, field) == 0) {
+			ret = h->handle(value, resp);
+			break;
+		}
+	}
+	return ret;
+}
+
+static void init_response(struct http_response *resp)
+{
+	resp->body_size = -1;
+	resp->body_read = 0;
+}
+
 /*
  * Receive a http response. Return %true on success.
  */
@@ -545,6 +604,8 @@ bool recv_response(struct http_connection *conn,
 {
 	char *buf;
 	bool ret = false;
+
+	init_response(resp);
 
 	buf = xmalloc(HTTP_LINE_MAX);
 
@@ -564,10 +625,9 @@ bool recv_response(struct http_connection *conn,
 		if (buf[0] == '\0')
 			break;
 
-		if (!parse_header(buf, &field, &value))
+		if (!parse_header(buf, &field, &value) ||
+		    !handle_header(field, value, resp))
 			goto err_hdrs;
-
-		/* We do not need to interpret received headers for now */
 	}
 
 	ret = true;
@@ -606,11 +666,30 @@ ssize_t http_response_read(struct http_response *resp, void *buf, size_t len)
 	struct http_connection *conn = &resp->conn;
 	size_t n;
 
+	/*
+	 * We don't really need to check content length here as we don't
+	 * support persistent connections, but let's be scrupulous.
+	 */
+	if (resp->body_size > 0) {
+		assert(resp->body_read <= resp->body_size);
+		len = min(len, resp->body_size - resp->body_read);
+	}
+
 	n = buffered_recv(conn, buf, len);
+	resp->body_read += n;
 	if (n)
 		return n;
 
-	return conn->failed ? -1 : 0;
+	if (conn->failed)
+		return -1;
+
+	/* EOF - check that Content-Length is correct */
+	if (resp->body_read < resp->body_size) {
+		set_last_error("Response body shorter than announced");
+		return -1;
+	}
+
+	return 0;
 }
 
 void http_response_destroy(struct http_response *resp)

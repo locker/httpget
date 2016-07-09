@@ -29,6 +29,9 @@ struct http_response {
 				   9 for 0.9, 10 for 1.0, 11 for 1.1 */
 	int status;		/* status code */
 	char *reason;		/* reason message */
+
+	size_t body_size;	/* content length; 0 if unavailable */
+	size_t body_read;	/* number of bytes read from body */
 };
 
 #define HTTP_STATUS_OK(status)	((status) / 100 == 2)	/* 2xx */
