@@ -188,11 +188,13 @@ static void do_send(struct http_connection *conn, const char *buf, size_t len)
 
 /*
  * Wrapper around recv(2). Receives @len bytes at max and stores them in @buf.
- * Returns the number of bytes received, which can be less than @len only if
- * the connection was closed or an error occurred. On failure, sets @last_error
- * and the @conn->failed flag. If the flag is already set, does nothing.
+ * Returns the number of bytes received, which can be less than @len. On EOF
+ * returns 0. On failure, sets @last_error and the @conn->failed flag. If the
+ * flag is already set, does nothing. If @exact is set, this function will keep
+ * looping until it receives exactly @len bytes.
  */
-static size_t do_recv(struct http_connection *conn, char *buf, size_t len)
+static size_t do_recv(struct http_connection *conn, char *buf, size_t len,
+		      bool exact)
 {
 	size_t ret = 0;
 
@@ -210,6 +212,8 @@ static size_t do_recv(struct http_connection *conn, char *buf, size_t len)
 			conn->failed = true;
 		} else
 			break; /* EOF */
+		if (!exact)
+			break;
 	}
 	return ret;
 }
@@ -279,7 +283,7 @@ static size_t refill_buffer(struct http_connection *conn)
 	if (!BUF_USED(conn))
 		conn->buf_begin = conn->buf_end = 0;
 
-	n = do_recv(conn, BUF_END(conn), BUF_LEFT(conn));
+	n = do_recv(conn, BUF_END(conn), BUF_LEFT(conn), false);
 	conn->buf_end += n;
 	return n;
 }
@@ -329,7 +333,7 @@ static size_t buffered_recv(struct http_connection *conn, char *buf, size_t len)
 
 	/* Still want more? */
 	if (len > 0)
-		ret += do_recv(conn, buf, len);
+		ret += do_recv(conn, buf, len, true);
 
 	return ret;
 }
@@ -909,8 +913,10 @@ static ssize_t simple_read(struct http_response *resp, void *buf, size_t len)
 	size_t n;
 
 	/*
-	 * We don't really need to check content length here as we don't
-	 * support persistent connections, but let's be scrupulous.
+	 * Stop as soon as we've received as much as was announced. The point
+	 * is that the server is allowed to leave the connection open after
+	 * sending out a response, so if we ignore Content-Length and continue
+	 * receiving data, we might get stuck forever.
 	 */
 	if (resp->body_size > 0) {
 		assert(resp->body_read <= resp->body_size);
