@@ -409,7 +409,7 @@ static void download(void)
 	if (!url_parse(URL, &url))
 		fail("Failed to parse URL");
 
-	if (url.scheme && strcmp(url.scheme, "http") != 0)
+	if (url.scheme && strcmp(url.scheme, HTTP_URL_SCHEME) != 0)
 		fail("URL scheme not supported: %s", url.scheme);
 
 	if (!url.host)
