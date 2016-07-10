@@ -5,8 +5,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <string.h>
 #include <time.h>
+#include <limits.h>
 #include <errno.h>
 #include <assert.h>
 
@@ -28,7 +30,8 @@
  */
 static char *PROG_NAME;
 static char *URL;
-static char *OUTPUT_FILE;
+static char *OUTPUT_FILE;	/* NULL for auto */
+static ssize_t OUTPUT_POS;	/* -1 for auto */
 static bool QUIET;
 
 static int output_fd = -1;
@@ -54,6 +57,8 @@ static void print_help(void)
 	       "Options:\n"
 	       "  -o FILE       write document to FILE\n"
 	       "                (use `-' for stdandard output)\n"
+	       "  -c OFFSET	resume transfer at OFFSET\n"
+	       "                (use `-' for auto detection)\n"
 	       "  -q            quiet (no output)\n"
 	       "  -v            increase output verbosity\n"
 	       "                (useful for debugging)\n"
@@ -82,13 +87,24 @@ static void parse_error(const char *fmt, ...)
 static void parse_args(int argc, char *argv[])
 {
 	int c;
+	long long x;
 
 	PROG_NAME = argv[0];
 
-	while ((c = getopt(argc, argv, "o:qvh")) != -1) {
+	while ((c = getopt(argc, argv, "o:c:qvh")) != -1) {
 		switch (c) {
 		case 'o':
 			OUTPUT_FILE = optarg;
+			break;
+		case 'c':
+			if (strcmp(optarg, "-") == 0) {
+				OUTPUT_POS = -1;
+				break;
+			}
+			if (!strict_strtoll(optarg, 10, &x) ||
+			    x < 0 || x > SSIZE_MAX)
+				parse_error("invalid OFFSET");
+			OUTPUT_POS = x;
 			break;
 		case 'q':
 			QUIET = true;
@@ -135,23 +151,82 @@ static void __fail(int err, const char *fmt, ...)
 #define fail(fmt...)		__fail(0, fmt)
 #define fail_errno(fmt...)	__fail(errno, fmt)
 
+/*
+ * Must be called before detect_output_pos(), because the latter needs to know
+ * output file name.
+ */
+static void detect_output_file(void)
+{
+	/* Explicitly specified - nothing to do */
+	if (OUTPUT_FILE)
+		return;
+
+	/* Otherwise use the last component of URL path */
+	OUTPUT_FILE = !strempty(url.name) ? url.name : DEFAULT_OUTPUT_FILE;
+}
+
+/*
+ * Not a part of open_output_file(), because we don't want to create a file
+ * in case http request fails, while we need to know output position before
+ * sending a request.
+ */
+static void detect_output_pos(void)
+{
+	struct stat st;
+
+	/* Explicitly specified - nothing to do */
+	if (OUTPUT_POS >= 0)
+		return;
+
+	/* Start from the beginning by default */
+	OUTPUT_POS = 0;
+
+	/*
+	 * If we're writing to stdout there's no way to automatically resume
+	 * the previous transfer.
+	 */
+	if (!OUTPUT_FILE)
+		return;
+
+	if (stat(OUTPUT_FILE, &st) == -1) {
+		/* No file - no auto resume */
+		if (errno != ENOENT)
+			fail_errno("Failed to stat output file");
+		return;
+	}
+
+	OUTPUT_POS = st.st_size;
+}
+
 static void open_output_file(void)
 {
-	const char *filename = OUTPUT_FILE;
+	int open_flags = O_WRONLY|O_CREAT;
 
-	if (!filename)
-		filename = !strempty(url.name) ? url.name : DEFAULT_OUTPUT_FILE;
-	else if (strcmp(OUTPUT_FILE, "-") == 0) {
+	if (strcmp(OUTPUT_FILE, "-") == 0) {
 		output_fd = STDOUT_FILENO;
 		return;
 	}
 
-	output_fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC, 0666);
+	/* Call ftruncate and lseek only if really necessary */
+	if (OUTPUT_POS == 0)
+		open_flags |= O_TRUNC;
+
+	output_fd = open(OUTPUT_FILE, open_flags, 0666);
 	if (output_fd < 0)
 		fail_errno("Failed to open output file");
 
-	if (!QUIET)
-		fprintf(stderr, "Saving to: `%s`\n", filename);
+	if (OUTPUT_POS > 0) {
+		if (ftruncate(output_fd, OUTPUT_POS) == -1)
+			fail_errno("Failed to truncate output file");
+		if (lseek(output_fd, OUTPUT_POS, SEEK_SET) == (off_t)-1)
+			fail_errno("Seek on output file failed");
+	}
+
+	if (!QUIET) {
+		fprintf(stderr, "Saving to: `%s`\n", OUTPUT_FILE);
+		if (OUTPUT_POS > 0)
+			fprintf(stderr, "Resuming transfer at %zd\n", OUTPUT_POS);
+	}
 }
 
 static void close_output_file(void)
@@ -247,6 +322,15 @@ static void download_http(void)
 	char *buf;
 	ssize_t n;
 
+	detect_output_file();
+	detect_output_pos();
+
+	if (OUTPUT_POS > 0) {
+		info.want_range = 1;
+		info.range_first = OUTPUT_POS;
+		info.range_last = SIZE_MAX;
+	}
+
 	buf = xmalloc(BUF_SIZE);
 
 	if (!http_simple_request(&info, &resp))
@@ -254,6 +338,10 @@ static void download_http(void)
 
 	if (!HTTP_STATUS_OK(resp.status))
 		fail("Error %d: %s", resp.status, resp.reason);
+
+	if (info.want_range && !resp.ranged)
+		fail("HTTP server does not seem to support byte ranges. "
+		     "Cannot resume.");
 
 	open_output_file();
 	while (1) {
