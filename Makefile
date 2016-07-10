@@ -1,4 +1,8 @@
+PREFIX		= /usr
+BINDIR		= ${PREFIX}/bin
+
 CC		= gcc
+INSTALL		= install
 
 CFLAGS		= -Wall -Werror
 CPPFLAGS	= -MMD
@@ -23,5 +27,9 @@ $(PROGNAME): $(OBJ_FILES)
 PHONY += clean
 clean:
 	$(RM) $(OBJ_FILES) $(DEP_FILES) $(PROGNAME)
+
+PHONY += install
+install: $(PROGNAME)
+	$(INSTALL) -D -s $(PROGNAME) $(BINDIR)/$(PROGNAME)
 
 .PHONY: $(PHONY)
