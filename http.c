@@ -83,6 +83,27 @@ static void dump_addrinfo(struct addrinfo *ai)
 		dump(" (%s) port %d", addr, port);
 }
 
+static void init_response(struct http_response *resp)
+{
+	struct http_connection *conn = &resp->conn;
+
+	memset(resp, 0, sizeof(*resp));
+
+	conn->sockfd = -1;
+	conn->buf = xmalloc(BUF_SIZE);
+}
+
+static void destroy_response(struct http_response *resp)
+{
+	struct http_connection *conn = &resp->conn;
+
+	if (conn->sockfd >= 0)
+		close(conn->sockfd);
+	free(conn->buf);
+
+	free(resp->reason);
+}
+
 /*
  * Try to establish a tcp connection to be used for http session.
  * Return %true and set conn->sockfd on success.
@@ -189,20 +210,6 @@ static size_t do_recv(struct http_connection *conn, char *buf, size_t len)
 			break; /* EOF */
 	}
 	return ret;
-}
-
-static void init_conn(struct http_connection *conn)
-{
-	memset(conn, 0, sizeof(*conn));
-	conn->sockfd = -1;
-	conn->buf = xmalloc(BUF_SIZE);
-}
-
-static void destroy_conn(struct http_connection *conn)
-{
-	if (conn->sockfd >= 0)
-		close(conn->sockfd);
-	free(conn->buf);
 }
 
 /*
@@ -682,21 +689,6 @@ static bool handle_header(char *field, char *value, struct http_response *resp)
 	return ret;
 }
 
-static void init_response(struct http_response *resp)
-{
-	resp->ranged = 0;
-	resp->chunked = 0;
-
-	resp->body_size = -1;
-	resp->body_read = 0;
-
-	resp->range_first = 0;
-	resp->range_last = 0;
-	resp->range_total = 0;
-
-	resp->chunk_size = 0;
-}
-
 /*
  * Receive a http response. Return %true on success.
  */
@@ -705,8 +697,6 @@ static bool recv_response(struct http_connection *conn,
 {
 	char *buf;
 	bool ret = false;
-
-	init_response(resp);
 
 	buf = xmalloc(HTTP_LINE_MAX);
 
@@ -780,7 +770,7 @@ bool http_simple_request(const struct http_request_info *info,
 {
 	struct http_connection *conn = &resp->conn;
 
-	init_conn(conn);
+	init_response(resp);
 
 	if (!do_connect(info->host, info->port, conn))
 		goto fail;
@@ -793,19 +783,15 @@ bool http_simple_request(const struct http_request_info *info,
 
 	/* Check requested-vs-received ranges */
 	if (resp->ranged && !check_range(info, resp))
-		goto fail_destroy_response;
+		goto fail;
 
 	/* Load the first chunk - see chunked_read() */
 	if (resp->chunked && !load_chunk(conn, resp))
-		goto fail_destroy_response;
+		goto fail;
 
 	return true;
 fail:
-	destroy_conn(conn);
-	return false;
-
-fail_destroy_response:
-	http_response_destroy(resp);
+	destroy_response(resp);
 	return false;
 }
 
@@ -893,6 +879,5 @@ ssize_t http_response_read(struct http_response *resp, void *buf, size_t len)
 
 void http_response_destroy(struct http_response *resp)
 {
-	destroy_conn(&resp->conn);
-	free(resp->reason);
+	destroy_response(resp);
 }
