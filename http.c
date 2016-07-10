@@ -527,6 +527,17 @@ static bool parse_header(char *str, char **field, char **value)
 	return true;
 }
 
+static bool parse_size(const char *s, int base, size_t *result)
+{
+	long long x;
+
+	if (!strict_strtoll(s, base, &x) || x < 0 || x > SIZE_MAX)
+		return false;
+
+	*result = x;
+	return true;
+}
+
 struct http_header_handler {
 	/*
 	 * The field name which this handler handles.
@@ -542,21 +553,14 @@ struct http_header_handler {
 
 static bool handle_content_length_header(char *s, struct http_response *resp)
 {
-	char *end;
-	unsigned long long x;
-
 	/* Content-Length is ignored for chunked responses */
 	if (resp->chunked)
 		return true;
 
-	x = strtoull(s, &end, 10);
-	if (*end || end == s ||
-	    (x == ULLONG_MAX && errno == ERANGE) || x > SIZE_MAX) {
+	if (!parse_size(s, 10, &resp->body_size)) {
 		set_last_error("Failed to parse `Content-Length' header: %s", s);
 		return false;
 	}
-
-	resp->body_size = x;
 	return true;
 }
 
@@ -657,24 +661,14 @@ static bool load_chunk(struct http_connection *conn,
 		       struct http_response *resp)
 {
 	char buf[16]; /* should be enough for storing chunk size */
-	char *end;
-	unsigned long x;
 
-	if (recv_line(conn, buf, sizeof(buf)) >= sizeof(buf))
-		goto fail;
-
-	x = strtoul(buf, &end, 16);
-	if (*end || end == buf ||
-	    (x == ULONG_MAX && errno == ERANGE) || x > SIZE_MAX)
-		goto fail;
-
-	resp->chunk_size = x;
+	if (recv_line(conn, buf, sizeof(buf)) >= sizeof(buf) ||
+	    !parse_size(buf, 16, &resp->chunk_size)) {
+		if (!conn->failed)
+			set_last_error("Failed to parse response chunk size");
+		return false;
+	}
 	return true;
-
-fail:
-	if (!conn->failed)
-		set_last_error("Failed to parse response chunk size");
-	return false;
 }
 
 bool http_simple_request(const struct http_request_info *info,
