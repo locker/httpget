@@ -30,10 +30,18 @@ struct http_response {
 	int status;		/* status code */
 	char *reason;		/* reason message */
 
+	unsigned ranged:1;	/* partial body */
+	unsigned chunked:1;	/* chunked body */
+
 	size_t body_size;	/* content length; 0 if unavailable */
 	size_t body_read;	/* number of bytes read from body */
 
-	bool chunked;		/* Transfer-Encoding: chunked */
+	/* always 0 if @ranged is unset */
+	size_t range_first;	/* first byte in the range */
+	size_t range_last;	/* last byte in the range */
+	size_t range_total;	/* total number of bytes in the file */
+
+	/* always 0 if @chunked is unset */
 	size_t chunk_size;	/* number of bytes left in current chunk;
 				   0 if we're done reading */
 };
@@ -46,6 +54,16 @@ struct http_request_info {
 
 	char *command;		/* http command, e.g. GET */
 	char *path;		/* http command path */
+
+	unsigned want_range:1;	/* for byte-serving, see below */
+
+	/*
+	 * If @want_range is set, request a specific part of the file,
+	 * starting at @range_first byte and ending at @range_last byte.
+	 * Set @range_last to %SIZE_MAX for the last byte of the file.
+	 */
+	size_t range_first;
+	size_t range_last;
 };
 
 /**

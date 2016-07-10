@@ -354,6 +354,19 @@ static void send_header(struct http_connection *conn,
 	send_line(conn, field, ": ", value, NULL);
 }
 
+static void send_range_header(struct http_connection *conn,
+			      size_t first, size_t last)
+{
+	char buf[32];
+
+	if (last != SIZE_MAX)
+		snprintf(buf, sizeof(buf), "bytes=%zu-%zu", first, last);
+	else
+		snprintf(buf, sizeof(buf), "bytes=%zu-", first);
+
+	send_header(conn, "Range", buf);
+}
+
 /*
  * Submit a http request. Return %true on success.
  */
@@ -368,6 +381,9 @@ static bool send_request(struct http_connection *conn,
 	/* We do not support persistent connections,
 	 * neither do we actually need them for now */
 	send_header(conn, "Connection", "close");
+
+	if (info->want_range)
+		send_range_header(conn, info->range_first, info->range_last);
 
 	send_line(conn, NULL);
 
@@ -564,6 +580,66 @@ static bool handle_content_length_header(char *s, struct http_response *resp)
 	return true;
 }
 
+static bool handle_content_range_header(char *s, struct http_response *resp)
+{
+	/*
+	 * Example of an expected value:
+	 *
+	 * Content-Range: bytes 100-200/300
+	 *
+	 * We're pedantic, so don't trust sscanf.
+	 */
+	char *orig_s = s, *dash_pos = NULL, *slash_pos = NULL;
+
+	/* unit - we only support bytes */
+	if (strncasecmp(s, "bytes", 5) != 0)
+		goto fail;
+	s += 5;
+	if (!isspace(*s))
+		goto fail;
+	s = skipspaces(s);
+
+	/* index of the first byte in the range */
+	dash_pos = strchr(s, '-');
+	if (!dash_pos)
+		goto fail;
+	*dash_pos = '\0';
+	if (!parse_size(s, 10, &resp->range_first))
+		goto fail;
+	s = dash_pos + 1;
+
+	/* index of the last byte in the range */
+	slash_pos = strchr(s, '/');
+	if (!slash_pos)
+		goto fail;
+	*slash_pos = '\0';
+	if (!parse_size(s, 10, &resp->range_last))
+		goto fail;
+	s = slash_pos + 1;
+
+	/* total number of bytes in the file */
+	if (!parse_size(s, 10, &resp->range_total))
+		goto fail;
+
+	/* sanity check */
+	if (resp->range_first > resp->range_last ||
+	    resp->range_last >= resp->range_total)
+		goto fail;
+
+	resp->ranged = 1;
+	return true;
+
+fail:
+	/* restore the original header value for error reporting */
+	s = orig_s;
+	if (dash_pos)
+		*dash_pos = '-';
+	if (slash_pos)
+		*slash_pos = '/';
+	set_last_error("Failed to parse `Content-Range' header: %s", s);
+	return false;
+}
+
 static bool handle_transfer_encoding_header(char *s, struct http_response *resp)
 {
 	/* Looking for "chunked" at the end */
@@ -574,7 +650,7 @@ static bool handle_transfer_encoding_header(char *s, struct http_response *resp)
 
 	if (len >= chunked_strlen &&
 	    strcasecmp(s + len - chunked_strlen, chunked_str) == 0) {
-		resp->chunked = true;
+		resp->chunked = 1;
 
 		/* Content-Length is ignored for chunked responses */
 		resp->body_size = 0;
@@ -584,6 +660,7 @@ static bool handle_transfer_encoding_header(char *s, struct http_response *resp)
 
 static struct http_header_handler header_handlers[] = {
 	{ "Content-Length",		handle_content_length_header, },
+	{ "Content-Range",		handle_content_range_header, },
 	{ "Transfer-Encoding",		handle_transfer_encoding_header, },
 	{ }, /* terminate */
 };
@@ -607,10 +684,16 @@ static bool handle_header(char *field, char *value, struct http_response *resp)
 
 static void init_response(struct http_response *resp)
 {
+	resp->ranged = 0;
+	resp->chunked = 0;
+
 	resp->body_size = -1;
 	resp->body_read = 0;
 
-	resp->chunked = false;
+	resp->range_first = 0;
+	resp->range_last = 0;
+	resp->range_total = 0;
+
 	resp->chunk_size = 0;
 }
 
@@ -657,6 +740,27 @@ err_hdrs:
 	goto out;
 }
 
+static bool check_range(const struct http_request_info *info,
+			struct http_response *resp)
+{
+	size_t first = 0, last = resp->range_total - 1;
+
+	if (info->want_range) {
+		first = info->range_first;
+		if (info->range_last != SIZE_MAX)
+			last = info->range_last;
+	}
+
+	if (first != resp->range_first || last != resp->range_last) {
+		set_last_error("Received range differs from requested: "
+			       "requested %zu-%zu, received %zu-%zu",
+			       first, last, resp->range_first, resp->range_last);
+		return false;
+	}
+
+	return true;
+}
+
 static bool load_chunk(struct http_connection *conn,
 		       struct http_response *resp)
 {
@@ -687,15 +791,21 @@ bool http_simple_request(const struct http_request_info *info,
 	if (!recv_response(conn, resp))
 		goto fail;
 
+	/* Check requested-vs-received ranges */
+	if (resp->ranged && !check_range(info, resp))
+		goto fail_destroy_response;
+
 	/* Load the first chunk - see chunked_read() */
-	if (resp->chunked && !load_chunk(conn, resp)) {
-		http_response_destroy(resp);
-		return false;
-	}
+	if (resp->chunked && !load_chunk(conn, resp))
+		goto fail_destroy_response;
 
 	return true;
 fail:
 	destroy_conn(conn);
+	return false;
+
+fail_destroy_response:
+	http_response_destroy(resp);
 	return false;
 }
 
