@@ -285,6 +285,7 @@ static void print_progress(size_t read, size_t total, bool done)
 
 	time_t now;
 	size_t rate;
+	char buf[64];
 
 	if (QUIET)
 		return;
@@ -316,12 +317,15 @@ static void print_progress(size_t read, size_t total, bool done)
 	 * easily redraw it by sending '\r'.
 	 */
 	line_len = fprintf(stderr,
-			   "Downloaded %zu/%zu kB in %d second(s), "
+			   "Downloaded %zu/%zu kB in %s, "
 			   "average rate: %zu kB/s",
-			   read, total, (int)(now - begin), rate);
+			   read, total,
+			   str_seconds(now - begin, buf, sizeof(buf)),
+			   rate);
 	if (total >= read)
-		line_len += fprintf(stderr, ", time left: %d s",
-				    (int)((total - read) / (rate + 1)));
+		line_len += fprintf(stderr, ", time left: %s",
+				    str_seconds((total - read) / (rate + 1),
+						buf, sizeof(buf)));
 
 	if (done)
 		fputc('\n', stderr);
