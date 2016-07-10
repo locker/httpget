@@ -59,6 +59,19 @@ char *strstrip(char *str);
  */
 bool strict_strtoll(const char *str, int base, long long *result);
 
+/**
+ * str_seconds - print seconds to string
+ * @seconds: the number of seconds
+ * @buf: destination buffer
+ * @size: the buffer size
+ *
+ * Returns @buf.
+ *
+ * This function outputs @seconds in a human readable form, e.g.
+ * 12508 seconds -> "3h 28m 28s"
+ */
+char *str_seconds(unsigned int seconds, char *buf, size_t size);
+
 /*
  * x versions of memory allocation functions never return NULL,
  * instead they terminate the program on failure

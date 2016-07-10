@@ -56,6 +56,24 @@ bool strict_strtoll(const char *str, int base, long long *result)
 	return true;
 }
 
+char *str_seconds(unsigned int seconds, char *buf, size_t size)
+{
+	unsigned int hours, minutes;
+
+	hours = seconds / 60 / 60;
+	minutes = seconds / 60 - hours * 60;
+	seconds = seconds - minutes * 60 - hours * 60 * 60;
+
+	if (hours)
+		snprintf(buf, size, "%uh %um %us", hours, minutes, seconds);
+	else if (minutes)
+		snprintf(buf, size, "%um %us", minutes, seconds);
+	else
+		snprintf(buf, size, "%us", seconds);
+
+	return buf;
+}
+
 static void __xalloc_failed(const char *file, int line, size_t size)
 {
 	fprintf(stderr, "%s:%d: Failed to allocate memory block of size %zu\n",
