@@ -34,6 +34,7 @@ static char *OUTPUT_FILE;	/* NULL for auto */
 static ssize_t OUTPUT_POS;	/* -1 for auto */
 static int MAX_REDIRECTIONS = 10;
 static char *CREDS;
+static bool TRUSTED_LOCATION;
 static bool QUIET;
 
 static int output_fd = -1;
@@ -64,6 +65,7 @@ static void print_help(void)
 	       "  -r MAX_REDIR  max number of redirections\n"
 	       "                (-1 for unlimited, default is %d)\n"
 	       "  -u USER:PASS  server user and password\n"
+	       "  -L            trust redirect location\n"
 	       "  -q            quiet (no output)\n"
 	       "  -v            increase output verbosity\n"
 	       "                (useful for debugging)\n"
@@ -96,7 +98,7 @@ static void parse_args(int argc, char *argv[])
 
 	PROG_NAME = argv[0];
 
-	while ((c = getopt(argc, argv, "o:c:r:u:qvh")) != -1) {
+	while ((c = getopt(argc, argv, "o:c:r:u:Lqvh")) != -1) {
 		switch (c) {
 		case 'o':
 			OUTPUT_FILE = optarg;
@@ -119,6 +121,9 @@ static void parse_args(int argc, char *argv[])
 			break;
 		case 'u':
 			CREDS = optarg;
+			break;
+		case 'L':
+			TRUSTED_LOCATION = true;
 			break;
 		case 'q':
 			QUIET = true;
@@ -333,6 +338,7 @@ static void download_http(void)
 		.path		= url.path,
 		.max_redirections = MAX_REDIRECTIONS,
 		.creds		= CREDS,
+		.trusted_location = TRUSTED_LOCATION,
 	};
 	struct http_response resp;
 	char *buf;
