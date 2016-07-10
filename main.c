@@ -32,6 +32,7 @@ static char *PROG_NAME;
 static char *URL;
 static char *OUTPUT_FILE;	/* NULL for auto */
 static ssize_t OUTPUT_POS;	/* -1 for auto */
+static int MAX_REDIRECTIONS = 10;
 static bool QUIET;
 
 static int output_fd = -1;
@@ -59,11 +60,13 @@ static void print_help(void)
 	       "                (use `-' for stdandard output)\n"
 	       "  -c OFFSET	resume transfer at OFFSET\n"
 	       "                (use `-' for auto detection)\n"
+	       "  -r MAX_REDIR  max number of redirections\n"
+	       "                (-1 for unlimited, default is %d)\n"
 	       "  -q            quiet (no output)\n"
 	       "  -v            increase output verbosity\n"
 	       "                (useful for debugging)\n"
 	       "  -h            print this help and exit\n",
-	       PROG_NAME);
+	       PROG_NAME, MAX_REDIRECTIONS);
 }
 
 static void parse_error(const char *fmt, ...)
@@ -91,7 +94,7 @@ static void parse_args(int argc, char *argv[])
 
 	PROG_NAME = argv[0];
 
-	while ((c = getopt(argc, argv, "o:c:qvh")) != -1) {
+	while ((c = getopt(argc, argv, "o:c:r:qvh")) != -1) {
 		switch (c) {
 		case 'o':
 			OUTPUT_FILE = optarg;
@@ -105,6 +108,12 @@ static void parse_args(int argc, char *argv[])
 			    x < 0 || x > SSIZE_MAX)
 				parse_error("invalid OFFSET");
 			OUTPUT_POS = x;
+			break;
+		case 'r':
+			if (!strict_strtoll(optarg, 10, &x) ||
+			    x < -1 || x > INT_MAX)
+				parse_error("invalid MAX_REDIR");
+			MAX_REDIRECTIONS = x;
 			break;
 		case 'q':
 			QUIET = true;
@@ -317,6 +326,7 @@ static void download_http(void)
 		.port		= url.port,
 		.command	= "GET",
 		.path		= url.path,
+		.max_redirections = MAX_REDIRECTIONS,
 	};
 	struct http_response resp;
 	char *buf;
