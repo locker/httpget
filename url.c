@@ -148,3 +148,23 @@ void url_destroy(struct url_struct *url)
 	if (url->path != slash_str)
 		free(url->path);
 }
+
+struct url_struct *url_alloc(const char *str)
+{
+	struct url_struct *url;
+
+	url = xmalloc(sizeof(*url));
+	if (!url_parse(str, url)) {
+		free(url);
+		return NULL;
+	}
+	return url;
+}
+
+void url_free(struct url_struct *url)
+{
+	if (url) {
+		url_destroy(url);
+		free(url);
+	}
+}

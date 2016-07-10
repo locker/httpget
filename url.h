@@ -48,4 +48,20 @@ bool url_parse(const char *str, struct url_struct *url);
  */
 void url_destroy(struct url_struct *url);
 
+/**
+ * url_alloc - alloc url_struct and init it from a URL string
+ * @str: the string
+ *
+ * Returns a pointer to the new url_struct on success, or %NULL on failure.
+ *
+ * The new url_struct must be freed using url_free().
+ */
+struct url_struct *url_alloc(const char *str);
+
+/**
+ * url_free - free url_struct allocated by url_alloc()
+ * @url: the url to free
+ */
+void url_free(struct url_struct *url);
+
 #endif /* _URL_H */
