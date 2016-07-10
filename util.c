@@ -6,7 +6,9 @@
 #include <stdbool.h>
 #include <string.h>
 #include <ctype.h>
+#include <limits.h>
 #include <errno.h>
+#include <assert.h>
 
 #include "util.h"
 
@@ -36,6 +38,22 @@ char *strstrip(char *str)
 	*p = '\0';
 
 	return str;
+}
+
+bool strict_strtoll(const char *str, int base, long long *result)
+{
+	char *end;
+
+	assert(base == 0 || (base >= 2 && base <= 36));
+
+	*result = strtoll(str, &end, base);
+	if ((*result == LLONG_MIN || *result == LLONG_MAX) && errno == ERANGE)
+		return false;
+	if (end == str || *end) {
+		errno = -EINVAL;
+		return false;
+	}
+	return true;
 }
 
 static void __xalloc_failed(const char *file, int line, size_t size)

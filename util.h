@@ -49,6 +49,16 @@ char *findspace(char *str);
  */
 char *strstrip(char *str);
 
+/**
+ * strict_strtoll - convert a string to long long
+ * @str: the string (must be nul-terminated)
+ * @base: the base (must be between 2 and 36 inclusive or 0)
+ * @result: the result location
+ *
+ * Returns %true on success. On failure returns %false and sets errno.
+ */
+bool strict_strtoll(const char *str, int base, long long *result);
+
 /*
  * x versions of memory allocation functions never return NULL,
  * instead they terminate the program on failure
