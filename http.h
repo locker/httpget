@@ -64,6 +64,8 @@ struct http_request_info {
 	char *path;		/* http command path */
 
 	unsigned want_range:1;	/* for byte-serving, see below */
+	unsigned trusted_location:1;	/* send credentials even when
+					   redirecting to another host */
 
 	/*
 	 * If @want_range is set, request a specific part of the file,

@@ -885,6 +885,14 @@ bool http_simple_request(const struct http_request_info *info,
 		 */
 		destroy_response(resp);
 
+		/*
+		 * Do not send credentials when redirecting to another host
+		 * unless explicitly allowed.
+		 */
+		if (i.creds && !i.trusted_location &&
+		    strcasecmp(url->host, i.host) != 0)
+			i.creds = NULL;
+
 		if (url->host) {
 			i.host = url->host;
 			i.port = url->port;
