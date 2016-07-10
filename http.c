@@ -14,6 +14,7 @@
 #include <assert.h>
 
 #include "util.h"
+#include "base64.h"
 #include "url.h"
 #include "http.h"
 
@@ -390,6 +391,23 @@ static void send_host_header(struct http_connection *conn,
 	send_line(conn, "Host: ",  host, buf, NULL);
 }
 
+static void send_auth_header(struct http_connection *conn, const char *creds)
+{
+	const char prefix[] = "Basic ";
+	size_t len, offset;
+	char *buf;
+
+	offset = sizeof(prefix) - 1;
+	len = base64_encode(creds, NULL, 0);
+	buf = xmalloc(len + offset + 1);
+	strcpy(buf, prefix);
+	base64_encode(creds, buf + offset, len + 1);
+
+	send_header(conn, "Authorization", buf);
+
+	free(buf);
+}
+
 /*
  * Submit a http request. Return %true on success.
  */
@@ -400,6 +418,9 @@ static bool send_request(struct http_connection *conn,
 
 	/* Host header is mandatory in case of HTTP/1.1 */
 	send_host_header(conn, info->host, info->port);
+
+	if (info->creds)
+		send_auth_header(conn, info->creds);
 
 	/* We do not support persistent connections,
 	 * neither do we actually need them for now */

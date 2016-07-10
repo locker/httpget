@@ -75,6 +75,10 @@ struct http_request_info {
 
 	int max_redirections;	/* maximum number of redirections allowed,
 				   -1 for unlimited */
+
+	char *creds;		/* if not %NULL, defines credentials for
+				   HTTP basic authentication in a form of
+				   `user:password' */
 };
 
 /**
