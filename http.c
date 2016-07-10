@@ -380,6 +380,16 @@ static void send_range_header(struct http_connection *conn,
 	send_header(conn, "Range", buf);
 }
 
+static void send_host_header(struct http_connection *conn,
+			     const char *host, int port)
+{
+	char buf[16] = "";
+
+	if (port >= 0)
+		snprintf(buf, sizeof(buf), ":%d", port);
+	send_line(conn, "Host: ",  host, buf, NULL);
+}
+
 /*
  * Submit a http request. Return %true on success.
  */
@@ -389,7 +399,7 @@ static bool send_request(struct http_connection *conn,
 	send_line(conn, info->command, " ", info->path, " HTTP/1.1", NULL);
 
 	/* Host header is mandatory in case of HTTP/1.1 */
-	send_header(conn, "Host", info->host);
+	send_host_header(conn, info->host, info->port);
 
 	/* We do not support persistent connections,
 	 * neither do we actually need them for now */
