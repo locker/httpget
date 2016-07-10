@@ -14,6 +14,7 @@
 #include <assert.h>
 
 #include "util.h"
+#include "url.h"
 #include "http.h"
 
 #define HTTP_PORT		80
@@ -102,6 +103,7 @@ static void destroy_response(struct http_response *resp)
 	free(conn->buf);
 
 	free(resp->reason);
+	url_free(resp->location);
 }
 
 /*
@@ -665,10 +667,21 @@ static bool handle_transfer_encoding_header(char *s, struct http_response *resp)
 	return true;
 }
 
+static bool handle_location_header(char *s, struct http_response *resp)
+{
+	resp->location = url_alloc(s);
+	if (!resp->location) {
+		set_last_error("Failed to parse `Location' header: %s", s);
+		return false;
+	}
+	return true;
+}
+
 static struct http_header_handler header_handlers[] = {
 	{ "Content-Length",		handle_content_length_header, },
 	{ "Content-Range",		handle_content_range_header, },
 	{ "Transfer-Encoding",		handle_transfer_encoding_header, },
+	{ "Location",			handle_location_header, },
 	{ }, /* terminate */
 };
 
@@ -765,8 +778,8 @@ static bool load_chunk(struct http_connection *conn,
 	return true;
 }
 
-bool http_simple_request(const struct http_request_info *info,
-			 struct http_response *resp)
+static bool __http_simple_request(const struct http_request_info *info,
+				  struct http_response *resp)
 {
 	struct http_connection *conn = &resp->conn;
 
@@ -793,6 +806,58 @@ bool http_simple_request(const struct http_request_info *info,
 fail:
 	destroy_response(resp);
 	return false;
+}
+
+bool http_simple_request(const struct http_request_info *info,
+			 struct http_response *resp)
+{
+	/* we will need to modify request info, so copy it */
+	struct http_request_info i = *info;
+	struct url_struct *url = NULL;
+	bool ret;
+
+	while (1) {
+		ret = __http_simple_request(&i, resp);
+		if (!ret)
+			break;
+
+		/* Hit the redirection limit? Stop now. */
+		if (i.max_redirections >= 0 && i.max_redirections-- == 0)
+			break;
+
+		/* Not a redirection response? We're done then. */
+		if (!HTTP_STATUS_REDIRECT(resp->status))
+			break;
+
+		/* Redirected, but not given the new location?
+		 * Suspicious. Can't continue. */
+		if (!resp->location)
+			break;
+
+		/* Unsupported target url scheme? Stop now. */
+		if (resp->location->scheme &&
+		    strcmp(resp->location->scheme, HTTP_URL_SCHEME) != 0)
+			break;
+
+		url_free(url);
+		url = resp->location;
+		resp->location = NULL; /* Prevent destroy_response()
+					  from destroying the url */
+
+		/*
+		 * TODO: Reuse resources/connection left from the previous
+		 * response if possible.
+		 */
+		destroy_response(resp);
+
+		if (url->host) {
+			i.host = url->host;
+			i.port = url->port;
+		}
+		i.path = url->path;
+	}
+	url_free(url);
+	return ret;
 }
 
 static ssize_t chunked_read(struct http_response *resp, void *buf, size_t len)

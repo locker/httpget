@@ -5,6 +5,10 @@
 #include <stdbool.h>
 #include <stdarg.h>
 
+#include "url.h"
+
+#define HTTP_URL_SCHEME		"http"
+
 typedef void (*http_dump_fn_t)(const char *, va_list);
 
 extern http_dump_fn_t http_dump_fn;	/* if set, this function will be used
@@ -44,9 +48,13 @@ struct http_response {
 	/* always 0 if @chunked is unset */
 	size_t chunk_size;	/* number of bytes left in current chunk;
 				   0 if we're done reading */
+
+	struct url_struct *location;	/* if not %NULL, points to
+					   redirect location */
 };
 
-#define HTTP_STATUS_OK(status)	((status) / 100 == 2)	/* 2xx */
+#define HTTP_STATUS_OK(status)		((status) / 100 == 2)	/* 2xx */
+#define HTTP_STATUS_REDIRECT(status)	((status) / 100 == 3)	/* 3xx */
 
 struct http_request_info {
 	char *host;		/* http server host name */
@@ -64,6 +72,9 @@ struct http_request_info {
 	 */
 	size_t range_first;
 	size_t range_last;
+
+	int max_redirections;	/* maximum number of redirections allowed,
+				   -1 for unlimited */
 };
 
 /**
