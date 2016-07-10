@@ -149,6 +149,9 @@ static void open_output_file(void)
 	output_fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC, 0666);
 	if (output_fd < 0)
 		fail_errno("Failed to open output file");
+
+	if (!QUIET)
+		fprintf(stderr, "Saving to: `%s`\n", filename);
 }
 
 static void close_output_file(void)
